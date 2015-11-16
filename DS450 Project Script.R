@@ -11,7 +11,6 @@
 #### Set working directory, load packages, load dataset
 
 # Set working directory
-setwd("C:/Users/user/Documents/Data Science/DATASCI450/Project")
 
 # Load required packages
 require(jsonlite)
@@ -23,15 +22,80 @@ require(splitstackshape)
 require(rpart)
 
 # Load dataset into R
-json_file <- 'train.json'
-data <- fromJSON(paste(getwd(),json_file, sep = "/"))
+load_recipe_data <- function(){
+  #setwd("C:/Users/user/Documents/Data Science/DATASCI450/Project")
+  setwd("C:\\Users\\Me\\Documents\\Github\\Datasci450_recipe")
+  json_file <- 'train.json'
+  data <- fromJSON(paste(getwd(),json_file, sep = "/"))
+  
+  return( data)
+}
 
-data_original <- data
+#### Break up data into test and train sets - code adapted from https://ufal.mff.cuni.cz/mlnlpr13
+split_train_test <- function(data, train_ratio = 0.8) {
+  # Code in number of rows for data, test, train
+  nrows_data <- nrow(data)
+  nrows_train <- round(0.9*nrow(data))
+  nrows_test <- nrows_data - nrows_train
+  
+  # Check to make sure we have the right number of rows for test, train, and data.
+  nrows_data
+  nrows_train
+  nrows_test
+  nrows_data == nrows_train + nrows_test
+  
+  set.seed(100)
+  random_nums <- sample(nrow(data)) 
+  
+  # Create training dataset
+  train_rows <- random_nums[1:nrows_train]
+  data_train <- data[train_rows,]
+  
+  # Create test dataset 
+  test_rows <- random_nums[(nrows_train+1):nrows_data]
+  data_test <- data[test_rows,]
+  
+  return(list('train' = data_train, 'test' = data_test))
+}
 
+#### Duplicate recipes  # NOTE: Should we sort first so we also ID duplicates that have different ingredient ordering?
+# How many duplicate recipes
+find_duplicates <- function(data) {
+  sum(duplicated(data$ingredients))  # 100 - meaning 200 entries are duplicates
+  
+  duplicates1 <- data[duplicated(data$ingredients, fromLast = TRUE),]
+  duplicates2 <- data[duplicated(data$ingredients, fromLast = FALSE),]
+  
+  duplicates1$ingredients <- sapply(duplicates1$ingredients, function(x) paste(x, sep = ",", collapse = ", "))
+  duplicates2$ingredients <- sapply(duplicates2$ingredients, function(x) paste(x, sep = ",", collapse = ", "))
+  
+  duplicates <- rbind(duplicates1, duplicates2)
+  
+  duplicates <- duplicates[order(duplicates$ingredients),]
+  # View(duplicates)  # Most are true duplicates... (with dif. ids), but some, like "butter", have two cuisine types.
+  return(duplicates)
+}  
+
+### Create binary indicator matrix for presence of ingredient in a recipe
+binarize_ingredients <- function(data) {
+  ingredients_table <- data.table(count_ingredients, key = "X1")
+  # Create features for popular ingredients only
+  popular_ingred <- tail(ingredients_table$ingredients, 30)
+  
+  binarized_matrix <- sapply(data$ingredients, function(x) popular_ingred %in% x)
+  binarized_df <- as.data.frame(t(binarized_matrix))
+  data2 <- cbind(data[,2], binarized_df, data$num_ingred)
+  data2 <- data.frame(data2)
+  names(data2[1]) <- "cuisine"
+  
+  names(data2) <- c("cuisine", popular_ingred, "num_ingred")
+  
+  return(data2)
+}
 
 #### Basic data investigation
 # View(data)  # to look at dataset
-
+data <- load_recipe_data()
 # Examine data structure
 str(data)
 
@@ -55,22 +119,6 @@ plot(cuisinetable, las = 2)
 # And in percentage terms...
 cuisinetable_perc <- round(cuisinetable/nrow(data)*100, 2)
 
-#### Duplicate recipes  # NOTE: Should we sort first so we also ID duplicates that have different ingredient ordering?
-# How many duplicate recipes
-sum(duplicated(data$ingredients))  # 100 - meaning 200 entries are duplicates
-
-duplicates1 <- data[duplicated(data$ingredients, fromLast = TRUE),]
-duplicates2 <- data[duplicated(data$ingredients, fromLast = FALSE),]
-
-duplicates1$ingredients <- sapply(duplicates1$ingredients, function(x) paste(x, sep = ",", collapse = ", "))
-duplicates2$ingredients <- sapply(duplicates2$ingredients, function(x) paste(x, sep = ",", collapse = ", "))
-
-duplicates <- rbind(duplicates1, duplicates2)
-
-duplicates <- duplicates[order(duplicates$ingredients),]
-# View(duplicates)  # Most are true duplicates... (with dif. ids), but some, like "butter", have two cuisine types.
-
-
 #### Recipes and ingredients
 
 # How many ingredients per recipe?
@@ -93,7 +141,7 @@ data[data$num_ingred == 2,]
 
 # Create density plots for number of ingredients per recipe by cuisine type
 ggplot(data, aes(x=num_ingred, colour=cuisine)) + geom_density()  # Looks like quite a bit of overlap, but certainly differences.
-ggplot(data, aes(x=num_ingred, fill=cuisine)) + geom_density()
+#ggplot(data, aes(x=num_ingred, fill=cuisine)) + geom_density()
 
 # Average number of ingredients for recipes by cuisine type
 avg_ingred_cuisine <- aggregate(num_ingred ~ cuisine, data = data, FUN = mean)
@@ -154,32 +202,9 @@ tail(ingredients_table, 30)  # Salt in 45% of recipes, top 20 in 11 - 20%, the r
 data$ingredients_char <- sapply(data$ingredients, function(x) paste(x, sep = ",", collapse = ", "))
 ingred_features <- concat.split.expanded(data, "ingredients_char", fill = 0, drop = TRUE, type = "character")
 
-
-
-#### Break up data into test and train sets - code adapted from https://ufal.mff.cuni.cz/mlnlpr13
-
-# Code in number of rows for data, test, train
-nrows_data <- nrow(data)
-nrows_train <- round(0.9*nrow(data))
-nrows_test <- nrows_data - nrows_train
-
-# Check to make sure we have the right number of rows for test, train, and data.
-nrows_data
-nrows_train
-nrows_test
-nrows_data == nrows_train + nrows_test
-
-set.seed(100)
-random_nums <- sample(nrow(data)) 
-
-# Create training dataset
-train_rows <- random_nums[1:nrows_train]
-data_train <- data[train_rows,]
-
-# Create test dataset 
-test_rows <- random_nums[(nrows_train+1):nrows_data]
-data_test <- data[test_rows,]
-
+train_test_split <- split_train_test(data)
+data_train <- train_test_split$train
+data_test <- train_test_split$test
 
 ## Quicker subsetting
 # set.seed(100)
@@ -198,27 +223,12 @@ M2 <- rpart(cuisine ~ num_ingred, data = data_train, method = "class")
 P2 <- predict(M2, data_test, type = "class")
 print(table(data_test$cuisine, P2))
 
-
-# Create features for popular ingredients only
-popular_ingred <- tail(ingredients_table$ingredients, 30)
-ingredient_features <- data.frame(matrix(ncol = length(popular_ingred), nrow = nrow(data)))
-
-for (i in 1:length(popular_ingred)) {
-  
-  ingredient_features[,i] <- sapply(data$ingredients_char,
-                                    function (x) grepl(popular_ingred[i], x))
-  
-}
-
-data2 <- cbind(data[,2], ingredient_features, data$num_ingred)
-names(data2[1]) <- "cuisine"
-
-names(data2) <- c("cuisine", popular_ingred, "num_ingred")
+binarized_data <- binarize_ingredients(data)
 
 # for now this model is just on the entire dataset, and tested with itself.
-M3 <- rpart(cuisine ~ ., data = data2, method =  "class")  # Can use a model frame and subset in this formula.
-P3 <- predict(M3, data2, type = "class")
-print(table(data2$cuisine, P3))
+M3 <- rpart(cuisine ~ ., data = binarized_data, method =  "class")  # Can use a model frame and subset in this formula.
+P3 <- predict(M3, binarized_data, type = "class")
+print(table(binarized_data$cuisine, P3))
 
 plot(M3, margin = 0.05)
 text(M3)
