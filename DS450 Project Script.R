@@ -77,10 +77,10 @@ find_duplicates <- function(data) {
 }  
 
 ### Create binary indicator matrix for presence of ingredient in a recipe
-binarize_ingredients <- function(data) {
+binarize_ingredients <- function(data, num_ingred = 100) {
   ingredients_table <- data.table(count_ingredients, key = "X1")
   # Create features for popular ingredients only
-  popular_ingred <- tail(ingredients_table$ingredients, 30)
+  popular_ingred <- tail(ingredients_table$ingredients, num_ingred)
   
   binarized_matrix <- sapply(data$ingredients, function(x) popular_ingred %in% x)
   binarized_df <- as.data.frame(t(binarized_matrix))
@@ -223,7 +223,7 @@ M2 <- rpart(cuisine ~ num_ingred, data = data_train, method = "class")
 P2 <- predict(M2, data_test, type = "class")
 print(table(data_test$cuisine, P2))
 
-binarized_data <- binarize_ingredients(data)
+binarized_data <- binarize_ingredients(data, 2000)
 
 # for now this model is just on the entire dataset, and tested with itself.
 M3 <- rpart(cuisine ~ ., data = binarized_data, method =  "class")  # Can use a model frame and subset in this formula.

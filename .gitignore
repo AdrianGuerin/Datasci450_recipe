@@ -4,6 +4,9 @@ __pycache__/
 
 *.json
 *.Rhistory
+*.png
+*.RData
+*.db
 
 # C extensions
 *.so
