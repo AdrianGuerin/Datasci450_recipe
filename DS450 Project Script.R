@@ -1,4 +1,3 @@
-
 #######################################
 #                                     #
 #           DS450 Project             #
@@ -10,6 +9,11 @@
 
 #### Set working directory, load packages, load dataset
 
+# Clear Workspace
+rm(list=ls())
+# Clear Console:
+cat("\014")
+
 # Set working directory
 
 # Load required packages
@@ -20,11 +24,13 @@ require(wordcloud)
 require(ggplot2)
 require(splitstackshape)
 require(rpart)
+require(e1071)
+require(class)
 
 # Load dataset into R
 load_recipe_data <- function(){
-  #setwd("C:/Users/user/Documents/Data Science/DATASCI450/Project")
-  setwd("C:\\Users\\Me\\Documents\\Github\\Datasci450_recipe")
+  setwd("C:/Users/user/Documents/Data Science/DATASCI450/Project")
+  #setwd("C:\\Users\\Me\\Documents\\Github\\Datasci450_recipe")
   json_file <- 'train.json'
   data <- fromJSON(paste(getwd(),json_file, sep = "/"))
   
@@ -33,28 +39,13 @@ load_recipe_data <- function(){
 
 #### Break up data into test and train sets - code adapted from https://ufal.mff.cuni.cz/mlnlpr13
 split_train_test <- function(data, train_ratio = 0.8) {
-  # Code in number of rows for data, test, train
-  nrows_data <- nrow(data)
-  nrows_train <- round(0.9*nrow(data))
-  nrows_test <- nrows_data - nrows_train
-  
-  # Check to make sure we have the right number of rows for test, train, and data.
-  nrows_data
-  nrows_train
-  nrows_test
-  nrows_data == nrows_train + nrows_test
-  
+
   set.seed(100)
-  random_nums <- sample(nrow(data)) 
+  randnums = runif(nrow(data), 0,1)
   
-  # Create training dataset
-  train_rows <- random_nums[1:nrows_train]
-  data_train <- data[train_rows,]
-  
-  # Create test dataset 
-  test_rows <- random_nums[(nrows_train+1):nrows_data]
-  data_test <- data[test_rows,]
-  
+  data_train = data[randnums < .2,]
+  data_test = data[randnums >= .2,]
+
   return(list('train' = data_train, 'test' = data_test))
 }
 
@@ -79,11 +70,15 @@ find_duplicates <- function(data) {
 ### Create binary indicator matrix for presence of ingredient in a recipe
 binarize_ingredients <- function(data, num_ingred = 100) {
   ingredients_table <- data.table(count_ingredients, key = "X1")
+  
   # Create features for popular ingredients only
   popular_ingred <- tail(ingredients_table$ingredients, num_ingred)
   
   binarized_matrix <- sapply(data$ingredients, function(x) popular_ingred %in% x)
   binarized_df <- as.data.frame(t(binarized_matrix))
+  
+  binarized_df <- binarized_df + 0  # to convert from logical to binary
+  
   data2 <- cbind(data[,2], binarized_df, data$num_ingred)
   data2 <- data.frame(data2)
   names(data2[1]) <- "cuisine"
@@ -98,6 +93,9 @@ binarize_ingredients <- function(data, num_ingred = 100) {
 data <- load_recipe_data()
 # Examine data structure
 str(data)
+
+# Check cuisine types
+unique(data$cuisine)
 
 # How many unique cuisines?
 length(unique(data$cuisine))
@@ -119,8 +117,8 @@ plot(cuisinetable, las = 2)
 # And in percentage terms...
 cuisinetable_perc <- round(cuisinetable/nrow(data)*100, 2)
 
-#### Recipes and ingredients
 
+#### Recipes and ingredients
 # How many ingredients per recipe?
 data$num_ingred <- sapply(data$ingredients, length)
 
@@ -137,8 +135,8 @@ table(subset)
 data[data$num_ingred == 1,]  # Maybe some of these would help predict... some not (butter, water)
 data[data$num_ingred == 2,]
 
-#### Ingredients and cuisine types
 
+#### Ingredients and cuisine types
 # Create density plots for number of ingredients per recipe by cuisine type
 ggplot(data, aes(x=num_ingred, colour=cuisine)) + geom_density()  # Looks like quite a bit of overlap, but certainly differences.
 #ggplot(data, aes(x=num_ingred, fill=cuisine)) + geom_density()
@@ -168,7 +166,7 @@ sd(count_ingredients$X1)
 
 # Trim the ingredients count to exclude 'outliers' (these are the very common ingredients, which may actually be quite useful to us)
 count_ingredients_trim <- count_ingredients[
-  count_ingredients$X1 < (mean(count_ingredients$X1)+1*sd(count_ingredients$X1)),]
+                          count_ingredients$X1 < (mean(count_ingredients$X1)+1*sd(count_ingredients$X1)),]
 
 boxplot(count_ingredients_trim$X1)
 hist(count_ingredients_trim$X1)  # looks like a power law distribution
@@ -193,24 +191,19 @@ ingredients_table[index,]
 
 # In what proportion of recipes do we see these ingredients (assumed not in the same recipe more than once)
 df_ingredients <- as.data.frame(ingredients_table)
-ingredients_table$X2 <- round(ingredients_table$X1/nrow(data)*100, 2)  # Calculate percentage frequency
+ingredients_table$X2 <- round(ingredients_table$X1/nrow(data)*100, 1)  # Calculate percentage frequency
 
 tail(ingredients_table, 30)  # Salt in 45% of recipes, top 20 in 11 - 20%, the rest below 10%
 
 
 #### Create features for ingredients
-data$ingredients_char <- sapply(data$ingredients, function(x) paste(x, sep = ",", collapse = ", "))
-ingred_features <- concat.split.expanded(data, "ingredients_char", fill = 0, drop = TRUE, type = "character")
+# Commented out for now... can use the binarize function above.
+# data$ingredients_char <- sapply(data$ingredients, function(x) paste(x, sep = ",", collapse = ", "))
+# ingred_features <- concat.split.expanded(data, "ingredients_char", fill = 0, drop = TRUE, type = "character")
 
 train_test_split <- split_train_test(data)
 data_train <- train_test_split$train
 data_test <- train_test_split$test
-
-## Quicker subsetting
-# set.seed(100)
-# randnums = runif(nrow(data), 0,1)
-# data.train = authorship[randnums < .2,]
-# data.test = authorship[randnums >= .2,]
 
 #### Test out some decision tree models
 # Basic model using only id as predictor
@@ -218,17 +211,40 @@ M1 <- rpart(cuisine ~ id, data = data_train, method = "class")
 P1 <- predict(M1, data_test, type = "class")
 print(table(data_test$cuisine, P1))
 
+plot(M1, margin = 0.05)
+text(M1)
+
 # Basic model using only number of ingredients as predictor
 M2 <- rpart(cuisine ~ num_ingred, data = data_train, method = "class")
 P2 <- predict(M2, data_test, type = "class")
 print(table(data_test$cuisine, P2))
 
-binarized_data <- binarize_ingredients(data, 2000)
+plot(M2, margin = 0.05)
+text(M2)
+
 
 # for now this model is just on the entire dataset, and tested with itself.
+binarized_data <- binarize_ingredients(data, num_ingred = 100)
+
 M3 <- rpart(cuisine ~ ., data = binarized_data, method =  "class")  # Can use a model frame and subset in this formula.
 P3 <- predict(M3, binarized_data, type = "class")
 print(table(binarized_data$cuisine, P3))
 
+sum(diag(table(binarized_data$cuisine, P3)))/sum(table(binarized_data$cuisine, P3))  # percent correct
+
 plot(M3, margin = 0.05)
 text(M3)
+
+
+### Naive Bayes
+binarized_data$cuisine <- as.factor(binarized_data$cuisine)
+M4 <- naiveBayes(cuisine ~ ., data = binarized_data)   
+P4 <- predict(M4, binarized_data[, -1, drop = FALSE])  
+print(table(binarized_data$cuisine, P4))
+
+sum(diag(table(binarized_data$cuisine, P4)))/sum(table(binarized_data$cuisine, P4))  # percent correct
+
+
+### kNN
+# binarized_data$cuisine <- as.character(binarized_data$cuisine)
+# M5 <- knn(train = binarized_data[,-1], test = binarized_data[,-1], cl = binarized_data$cuisine, k=3)
