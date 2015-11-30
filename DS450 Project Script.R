@@ -27,11 +27,12 @@ require(rpart)
 require(e1071)
 require(class)
 require(caret)
+require(randomForest)
 
 # Load dataset into R
 load_recipe_data <- function(){
-  #setwd("C:/Users/user/Documents/Data Science/DATASCI450/Project")
-  setwd("C:\\Users\\Me\\Documents\\Github\\Datasci450_recipe")
+  setwd("C:/Users/Adrian/Documents/DS450/Project")
+  #setwd("C:\\Users\\Me\\Documents\\Github\\Datasci450_recipe")
   json_file <- 'train.json'
   data <- fromJSON(paste(getwd(),json_file, sep = "/"))
   
@@ -45,10 +46,19 @@ load_recipe_data <- function(){
 # Create ingredients lists - master list and raw list
 calc_ingredients <- function(data) {
   
-  ingredients_master <- unique(unlist(data$ingredients))
-  length(ingredients_master)  # 6714 unique ingredients
   ingredients <- unlist(data$ingredients)
   
+  # clean data
+  ingredients <- tolower(ingredients)
+  ingredients <- gsub("_", " ", ingredients)
+  ingredients <- gsub("-", " ", ingredients)
+  ingredients <- gsub(",", " ", ingredients)
+  ingredients <- gsub("\\.", " ", ingredients)
+  ingredients <- gsub("&", "and", ingredients)
+  ingredients <- gsub("reduced", "low", ingredients)
+  
+  ingredients_master <- unique(unlist(data$ingredients))
+  length(ingredients_master)  # 6714 unique ingredients
   ##### Ingredient counts - how many times do we see each ingredient in the dataset
   # Create counts of ingredients
   dataframe <- data.frame(ingredients, 1, stringsAsFactors = FALSE)
@@ -99,13 +109,13 @@ explore_ingredients <- function(count_ingredients) {
 }
 
 #### Break up data into test and train sets - code adapted from https://ufal.mff.cuni.cz/mlnlpr13
-split_train_test <- function(data, train_ratio = 0.8) {
+split_train_test <- function(data, train_ratio = 0.2) {
 
   set.seed(100)
-  randnums = runif(nrow(data), 0,1)
+  randnums = runif(nrow(data), 0, 1)
   
-  data_train = data[randnums > .2,]
-  data_test = data[randnums <= .2,]
+  data_train = data[randnums < train_ratio,]
+  data_test = data[randnums >= train_ratio,]
 
   return(list('train' = data_train, 'test' = data_test))
 }
@@ -149,6 +159,18 @@ binarize_ingredients <- function(data, count_ingredients, how_many_ingred = 100)
   
   return(data2)
 }
+
+### Create binary indicator matrix of 50, 200, 1000
+
+binarize_datasets <- function(data) {
+  binarized_data50 <- binarize_ingredients(data, count_ingredients, 50)
+  binarized_data1000 <- binarize_ingredients(data, count_ingredients, 1000)
+  num_ingred <- length(count_ingredients$ingredients)
+  binarized_data_all <- binarize_ingredients(data_train, count_ingredients, num_ingred)
+  
+  return(list('bd50' = binarized_data50, 'bd1000' = binarized_data1000, 'bd_all' = binarized_data_all))
+}
+
 
 # create graphs of ingredient counts
 # also calculates num_ingredients in data, so returns processed data
@@ -209,71 +231,106 @@ explore_data <- function(data){
 }
 
 # run the prediction tree algorithms and plot them
-predict_trees <- function(train_data, data_test, count_ingredients) {
+predict_trees <- function(data) {
   
-  #### Test out some decision tree models
-  # Basic model using only id as predictor
-  #M1 <- rpart(cuisine ~ id, data = data_train, method = "class")
-  #P1 <- predict(M1, data_test, type = "class")
-  #print(table(data_test$cuisine, P1))
+  binarized_data50 <- binarized_data$bd50
+  binarized_data1000 <- binarized_data$bd1000
+  binarized_data_all <- binarized_data$bd_all
   
-  #plot(M1, margin = 0.05)
-  #text(M1)
+  naive_model50 <- rpart(as.factor(cuisine) ~ ., data = binarized_data50)   
+  naive_model1000 <- rpart(as.factor(cuisine) ~ ., data = binarized_data1000)
+  naive_model_all <- rpart(as.factor(cuisine) ~ ., data = binarized_data_all)
   
-  # Basic model using only number of ingredients as predictor
-  M2 <- rpart(cuisine ~ num_ingred, data = data_train, method = "class")
-  P2 <- predict(M2, data_test, type = "class")
-  print(table(data_test$cuisine, P2))
+  dt.pred50 <- predict(naive_model50, binarized_data50, type = "class")
+  dt.pred1000 <- predict(naive_model1000, binarized_data1000, type = "class")
+  dt.pred_all <- predict(naive_model_all, binarized_data_all, type = "class")
   
-  plot(M2, margin = 0.05)
-  text(M2)
+  confusionMatrix(dt.pred50, binarized_data50$cuisine)
+  confusionMatrix(dt.pred1000, binarized_data1000$cuisine)
+  confusionMatrix(dt.pred_all, binarized_data_all$cuisine)
   
+  plot(naive_model50, margin = 0)
+  text(naive_model50)
   
-  # for now this model is just on the entire dataset, and tested with itself.
-  binarized_data <- binarize_ingredients(data, count_ingredients, how_many_ingred = 100)
+  plot(naive_model1000, margin = 0)
+  text(naive_model1000)
   
-  M3 <- rpart(cuisine ~ ., data = binarized_data, method =  "class")  # Can use a model frame and subset in this formula.
-  P3 <- predict(M3, binarized_data, type = "class")
-  print(table(binarized_data$cuisine, P3))
+  plot(naive_model_all, margin = 0)
+  text(naive_model_all)
   
-  sum(diag(table(binarized_data$cuisine, P3)))/sum(table(binarized_data$cuisine, P3))  # percent correct
-  
-  plot(M3, margin = 0.05)
-  text(M3)
-  
-  return(list('M2' = M2, 'M3' = M3))
+  return(list('dt50' = dt.pred50, 'dt1000' = dt.pred1000, 'dt_all' = dt.pred_all))
 }
 
-# predict the cuisine using SVM; this take >10 minutes on my computer, for the 1000 ingredient matrix
-predict_svm <- function(data, count_ingredients) {
-  binarized_data50 <- binarize_ingredients(data, count_ingredients, 50)
-  binarized_data200 <- binarize_ingredients(data, count_ingredients, 200)
-  binarized_data1000 <- binarize_ingredients(data, count_ingredients, 1000)
+# run the prediction tree algorithms and plot them
+predict_forest <- function(data) {
+  
+  binarized_data50 <- binarized_data$bd50
+  binarized_data1000 <- binarized_data$bd1000
+  
+  # Some required data cleaning for RF to run properly...
+  names_bd50 <- names(binarized_data50)
+  names_bd50 <- gsub(" ", "_", names_bd50)
+  names(binarized_data50) <- names_bd50
+  
+  names_bd1000 <- names(binarized_data1000)
+  names_bd1000 <- gsub(" ", "_", names_bd1000)
+  names_bd1000 <- gsub("2%", "twop", names_bd1000)
+  names_bd1000 <- gsub("1%", "onep", names_bd1000)
+  names(binarized_data1000) <- names_bd1000
+
+  naive_model50 <- randomForest(as.factor(cuisine) ~ ., data = binarized_data50, importance = TRUE, ntree = 100)   
+  # naive_model1000 <- randomForest(as.factor(cuisine) ~ ., data = binarized_data1000, importance = TRUE, ntree = 100)
+  
+  naive_model1000 <- randomForest(as.factor(cuisine) ~ ., data = binarized_data1000, importance = TRUE, ntree = 50, nodesize = 5)
+  rf.pred1000 <- predict(naive_model1000_v2, binarized_data1000)
+  confusionMatrix(rf.pred1000, binarized_data1000$cuisine)
+  
+  rf.pred50 <- predict(naive_model50, binarized_data50)
+  rf.pred1000 <- predict(naive_model1000, binarized_data1000)
+  
+  confusionMatrix(rf.pred50, binarized_data50$cuisine)
+  confusionMatrix(rf.pred1000, binarized_data1000$cuisine)
+  
+  plot(naive_model50)
+  plot(naive_model1000)
+  
+  return(list('rf50' = rf.pred50, 'rf1000' = rf.pred1000))
+}
+
+# predict the cuisine using SVM; this takes >10 minutes on my computer, for the 1000 ingredient matrix
+predict_svm <- function(data) {
+
+  binarized_data50 <- binarized_data$bd50
+  binarized_data1000 <- binarized_data$bd1000
   
   naive_model50 <- svm(cuisine ~ ., data = binarized_data50)
-  naive_model200 <- svm(cuisine ~ ., data = binarized_data200)
   naive_model1000 <- svm(cuisine ~ ., data = binarized_data1000)
   
   svm.pred50 <- predict(naive_model50, binarized_data50)
-  svm.pred200 <- predict(naive_model200, binarized_data200)
   svm.pred1000 <- predict(naive_model1000, binarized_data1000)
   
   confusionMatrix(svm.pred50, binarized_data50$cuisine)
-  confusionMatrix(svm.pred200, binarized_data200$cuisine)
   confusionMatrix(svm.pred1000, binarized_data1000$cuisine)
   
-  return(list('svm50' = svm.pred50, 'svm200' = svm.pred200, 'svm1000' = svm.pred1000))
+  return(list('svm50' = svm.pred50, 'svm1000' = svm.pred1000))
 }
 
 # Naive Bayes prediction
-predict_bayes <- function(binarized_data) {
-  binarized_data$cuisine <- as.factor(binarized_data$cuisine)
-  M4 <- naiveBayes(cuisine ~ ., data = binarized_data)   
-  P4 <- predict(M4, binarized_data[, -1, drop = FALSE])  
-  print(table(binarized_data$cuisine, P4))
+predict_bayes <- function(data) {
+
+  binarized_data50 <- binarized_data$bd50
+  binarized_data1000 <- binarized_data$bd1000
   
-  sum(diag(table(binarized_data$cuisine, P4)))/sum(table(binarized_data$cuisine, P4))  # percent correct
-  return(M4)
+  naive_model50 <- naiveBayes(as.factor(cuisine) ~ ., data = binarized_data50)   
+  naive_model1000 <- naiveBayes(as.factor(cuisine) ~ ., data = binarized_data1000)   
+  
+  nb.pred50 <- predict(naive_model50, binarized_data50)
+  nb.pred1000 <- predict(naive_model1000, binarized_data1000)
+  
+  confusionMatrix(nb.pred50, binarized_data50$cuisine)
+  confusionMatrix(nb.pred1000, binarized_data1000$cuisine)
+  
+  return(list('nb50' = nb.pred50, 'nb1000' = nb.pred1000))
 }
 
 #### Basic data investigation
@@ -292,17 +349,20 @@ if(interactive()) {
   data_train <- train_test_split$train
   data_test <- train_test_split$test
   
-  # for now this model is just on the entire dataset, and tested with itself.
-  binarized_data <- binarize_ingredients(data, count_ingredients, how_many_ingred = 100)
+  # binarize the most common 50, 1000, all (6676) ingredients
+  binarized_data <- binarize_datasets(data_train)
   
   ### Decision tree predictions
-  tree_models <- predict_trees(data_train, data_test, count_ingredients)
+  tree_models <- predict_trees(binarized_data)
   
-  ### Decision tree predictions
-  #svm_models <- predict_svm(data_train, count_ingredients)
+  ### Random Forest predictions
+  forest_models <- predict_forest(binarized_data)
+  
+  ### SVM predictions
+  svm_models <- predict_svm(binarized_data)
   
   ### Naive Bayes
-  #bayes_models <- predict_bayes(data_train)
+  bayes_models <- predict_bayes(binarized_data)
   
   ### kNN
   # binarized_data$cuisine <- as.character(binarized_data$cuisine)
